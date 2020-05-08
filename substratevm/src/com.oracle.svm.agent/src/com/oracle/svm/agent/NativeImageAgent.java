@@ -124,6 +124,7 @@ public final class NativeImageAgent extends JvmtiAgentBase<NativeImageAgentJNIHa
     protected int onLoadCallback(JNIJavaVM vm, JvmtiEnv jvmti, JvmtiEventCallbacks callbacks, String options) {
         String traceOutputFile = null;
         String configOutputDir = null;
+        String dynclassDumpDir = null;
         ConfigurationSet restrictConfigs = new ConfigurationSet();
         ConfigurationSet mergeConfigs = new ConfigurationSet();
         boolean restrict = false;
@@ -156,6 +157,13 @@ public final class NativeImageAgent extends JvmtiAgentBase<NativeImageAgentJNIHa
                 if (token.startsWith("config-merge-dir=")) {
                     mergeConfigs.addDirectory(Paths.get(configOutputDir));
                 }
+            } else if (token.startsWith("dynamic-class-dump-dir=")) {
+                if (dynclassDumpDir != null) {
+                    System.err.println(MESSAGE_PREFIX + "cannot specify dynamic-class-dump-dir= more than once.");
+                    return 1;
+                }
+                dynclassDumpDir = transformPath(getTokenValue(token));
+                AbstractDynamicClassGenerationSupport.initDynClassDumpDir(dynclassDumpDir);
             } else if (token.startsWith("restrict-all-dir")) {
                 /* Used for testing */
                 restrictConfigs.addDirectory(Paths.get(getTokenValue(token)));
@@ -642,7 +650,7 @@ public final class NativeImageAgent extends JvmtiAgentBase<NativeImageAgentJNIHa
          * (unless another JVM is launched in this process).
          */
         // cleanupOnUnload(vm);
-
+        BreakpointInterceptor.reportExceptions();
         /*
          * The epilogue of this method does not tear down our VM: we don't seem to observe all
          * threads that end and therefore can't detach them, so we would wait forever for them.

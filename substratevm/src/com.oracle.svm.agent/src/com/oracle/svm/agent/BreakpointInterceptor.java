@@ -44,24 +44,31 @@ import static com.oracle.svm.jvmtiagentbase.Support.jvmtiEnv;
 import static com.oracle.svm.jvmtiagentbase.Support.jvmtiFunctions;
 import static com.oracle.svm.jvmtiagentbase.Support.testException;
 import static com.oracle.svm.jvmtiagentbase.Support.toCString;
+import static com.oracle.svm.jvmtiagentbase.Support.callObjectMethodL;
+import static com.oracle.svm.jvmtiagentbase.Support.getMethodFullNameAtFrame;
 import static com.oracle.svm.jvmtiagentbase.jvmti.JvmtiEvent.JVMTI_EVENT_BREAKPOINT;
 import static com.oracle.svm.jvmtiagentbase.jvmti.JvmtiEvent.JVMTI_EVENT_CLASS_PREPARE;
 import static com.oracle.svm.jvmtiagentbase.jvmti.JvmtiEvent.JVMTI_EVENT_NATIVE_METHOD_BIND;
 import static org.graalvm.word.WordFactory.nullPointer;
 
+import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.Supplier;
 
+import com.oracle.svm.configure.trace.AccessAdvisor;
 import org.graalvm.compiler.core.common.NumUtil;
+import org.graalvm.compiler.phases.common.LazyValue;
 import org.graalvm.nativeimage.StackValue;
 import org.graalvm.nativeimage.UnmanagedMemory;
 import org.graalvm.nativeimage.c.function.CEntryPoint;
@@ -84,6 +91,7 @@ import com.oracle.svm.agent.restrict.ResourceAccessVerifier;
 import com.oracle.svm.configure.config.ConfigurationMethod;
 import com.oracle.svm.core.c.function.CEntryPointOptions;
 import com.oracle.svm.core.util.VMError;
+
 import com.oracle.svm.jni.nativeapi.JNIEnvironment;
 import com.oracle.svm.jni.nativeapi.JNIMethodId;
 import com.oracle.svm.jni.nativeapi.JNINativeMethod;
@@ -132,7 +140,8 @@ final class BreakpointInterceptor {
     private static NativeImageAgent agent;
 
     private static Map<Long, Breakpoint> installedBreakpoints;
-
+    private static Set<String> definedClasses = new HashSet<>();
+    private static List<String> unsupportedExceptions = new ArrayList<>();
     /**
      * A map from {@link JNIMethodId} to entry point addresses for bound Java {@code native}
      * methods, NOT considering our intercepting functions, i.e., these are the original entry
@@ -171,6 +180,18 @@ final class BreakpointInterceptor {
                             getClassNameOr(env, callerClass, null, TraceWriter.UNKNOWN_VALUE),
                             result,
                             args);
+            guarantee(!testException(env));
+        }
+    }
+
+    static void traceBreakpoint(JNIEnvironment env, JNIObjectHandle clazz, JNIObjectHandle declaringClass,
+                    JNIObjectHandle callerClass, String function, boolean allowWrite, boolean unsafeAccess, Object result,
+                    String fieldName) {
+        if (traceWriter != null) {
+            traceWriter.traceCall("reflect", function, getClassNameOr(env, clazz, null, TraceWriter.UNKNOWN_VALUE),
+                            getClassNameOr(env, declaringClass, null, TraceWriter.UNKNOWN_VALUE),
+                            getClassNameOr(env, callerClass, null, TraceWriter.UNKNOWN_VALUE), result, allowWrite, unsafeAccess,
+                            fieldName);
             guarantee(!testException(env));
         }
     }
@@ -678,6 +699,124 @@ final class BreakpointInterceptor {
         return allowed;
     }
 
+    /**
+     * java.lang.ClassLoader.postDefineClass is always called in java.lang.ClassLoader.defineClass,
+     * so intercepting postDefineClass is equivalent to intercepting defineClass but with extra
+     * benefit of being always able to get defined class' name even if defineClass' classname
+     * parameter is null.
+     */
+    @SuppressWarnings("unused")
+    private static boolean postDefineClass(JNIEnvironment jni, Breakpoint bp) {
+        boolean isDynamicallyGenerated = false;
+
+        // Get class name from the argument "name" of
+        // defineClass(String name, byte[] b, int off, int len)
+        // The first argument is implicitly "this", so "name" is the 2nd parameter.
+        String nameFromDefineClassParam = fromJniString(jni, getObjectArgument(1, 1));
+        final String definedClassName;
+        JNIObjectHandle self = getObjectArgument(0);
+        // 1. Don't have a name for class before defining.
+        // The class is dynamically generated.
+        if (nameFromDefineClassParam == null) {
+            isDynamicallyGenerated = true;
+            // Get name from parameter "c" of method postDefineClass(Class<?> c, ProtectionDomain
+            // pd)
+            definedClassName = getClassNameOrNull(jni, getObjectArgument(1));
+        } else {
+            definedClassName = nameFromDefineClassParam;
+            // Filter out internal classes which are definitely not dynamically generated
+            // CallerClass is always java.lang.ClassLoader, we only check the defined class
+            AccessAdvisor postDefineCLassAccessAdvisor = new AccessAdvisor();
+            postDefineCLassAccessAdvisor.setInLivePhase(true);
+            if (postDefineCLassAccessAdvisor.shouldIgnore(new LazyValue<>(() -> definedClassName), new LazyValue<>(() -> null))) {
+                isDynamicallyGenerated = false;
+            }
+
+            // 2. Class with name starts with $ or contains $$ is usually dynamically generated
+            String className = definedClassName.substring(definedClassName.lastIndexOf('.') + 1);
+            if (className.startsWith("$") || className.contains("$$")) {
+                isDynamicallyGenerated = true;
+            } else {
+                // 3. A dynamically defined class always return null
+                // when call java.lang.ClassLoader.getResource(classname)
+                // This is the accurate but slow way.
+                String asResourceName = definedClassName.replace('.', '/') + ".class";
+                try (CCharPointerHolder resourceNameHolder = toCString(asResourceName);) {
+                    JNIObjectHandle resourceNameJString = jniFunctions().getNewStringUTF().invoke(jni, resourceNameHolder.get());
+                    JNIObjectHandle returnValue = callObjectMethodL(jni, self, agent.handles().javaLangClassLoaderGetResource, resourceNameJString);
+                    isDynamicallyGenerated = returnValue.equal(nullHandle());
+                }
+            }
+        }
+
+        // Reuse verifyForName
+        // CallerClass is always java.lang.ClassLoader, we only check the defined class
+        boolean allowed = (accessVerifier == null || accessVerifier.verifyForName(jni, nullHandle(), definedClassName));
+        Object result = false;
+        boolean justAdded = definedClasses.add(definedClassName);
+        if (isDynamicallyGenerated) {
+            if (!justAdded) {
+                unsupportedExceptions.add("Class " + definedClassName + " has been defined before. Multiple definitions are not supported.\n" +
+                                AbstractDynamicClassGenerationSupport.getStackTrace(jni).toString());
+                return allowed;
+            }
+            // Check the caller's protectionDomain is null, otherwise don't support
+            String caller = getMethodFullNameAtFrame(jni, 1);
+            if ("java.lang.ClassLoader.defineClass(Ljava/lang/String;[BIILjava/security/ProtectionDomain;)Ljava/lang/Class;".equals(caller)) {
+                caller = getMethodFullNameAtFrame(jni, 2);
+                if (!"java.lang.ClassLoader.defineClass(Ljava/lang/String;[BII)Ljava/lang/Class;".equals(caller)) {
+                    // Reflections are supported in another way, no need to track dynamic class
+                    // loading
+                    // used by reflection.
+                    if (!caller.startsWith("sun.reflect")) {
+                        unsupportedExceptions.add("Don't support defineClass with ProtectionDomain parameter in native image. " +
+                                        "Please try to use java.lang.ClassLoader.defineClass(String name, byte[] b, int off, int len) if possible.\n" +
+                                        AbstractDynamicClassGenerationSupport.getStackTrace(jni).toString());
+                    }
+                    return allowed;
+                }
+            } else {
+                unsupportedExceptions.add("Don't support defineClass with ProtectionDomain parameter in native image.  " +
+                                "Please try to use java.lang.ClassLoader.defineClass(String name, byte[] b, int off, int len) if possible.\n" +
+                                AbstractDynamicClassGenerationSupport.getStackTrace(jni).toString());
+                return allowed;
+            }
+            if (allowed) {
+                // Verify if defineClass succeeds
+                // As we hook on postDefineClass method which is the last step of defineClass, so if
+                // it can execute successfully, the whole defineClass method can execute
+                // successfully
+                JNIValue args = StackValue.get(2, JNIValue.class);
+                args.addressOf(0).setObject(getObjectArgument(1));
+                args.addressOf(1).setObject(getObjectArgument(2));
+                jniFunctions().getCallVoidMethodA().invoke(jni, self, bp.method, args);
+                if (clearException(jni)) {
+                    // No need to proceed if any exception happens
+                    result = false;
+                } else {
+                    result = true;
+                }
+            }
+            try {
+                JNIObjectHandle callerClass = getDirectCallerClass();
+                AbstractDynamicClassGenerationSupport dynamicSupport = AbstractDynamicClassGenerationSupport.getClassLoaderDefineClassSupport(jni, callerClass,
+                                definedClassName, traceWriter, agent);
+                dynamicSupport.dumpDefinedClass();
+                dynamicSupport.traceReflects(result);
+                if (!allowed) {
+                    try (CCharPointerHolder message = toCString(NativeImageAgent.MESSAGE_PREFIX + "configuration does not permit access to class: " + definedClassName)) {
+                        jniFunctions().getThrowNew().invoke(jni, agent.handles().javaLangClassNotFoundException, message.get());
+                    }
+                }
+                return allowed;
+            } catch (IOException e) {
+                throw new RuntimeException(e);
+            }
+        } else {
+            return allowed;
+        }
+    }
+
     private static boolean newProxyInstance(JNIEnvironment jni, Breakpoint bp) {
         JNIObjectHandle callerClass = getDirectCallerClass();
         JNIObjectHandle classLoader = getObjectArgument(0);
@@ -1166,6 +1305,19 @@ final class BreakpointInterceptor {
         }
     }
 
+    public static void reportExceptions() {
+        if (!unsupportedExceptions.isEmpty()) {
+            System.err.println(unsupportedExceptions.size() + " unsupported features are detected ");
+            StringBuilder errorMsg = new StringBuilder();
+            for (int i = 0; i < unsupportedExceptions.size(); i++) {
+                errorMsg.append(unsupportedExceptions.get(i)).append("\n");
+            }
+            throw new UnsupportedOperationException(errorMsg.toString());
+        } else {
+            unsupportedExceptions = null;
+        }
+    }
+
     public static void onUnload() {
         installedBreakpoints = null;
         nativeBreakpoints = null;
@@ -1174,10 +1326,11 @@ final class BreakpointInterceptor {
         proxyVerifier = null;
         resourceVerifier = null;
         traceWriter = null;
+        definedClasses = null;
     }
 
     private interface BreakpointHandler {
-        boolean dispatch(JNIEnvironment jni, Breakpoint bp);
+        boolean dispatch(JNIEnvironment jni, Breakpoint bp) throws IOException;
     }
 
     private static final BreakpointSpecification[] BREAKPOINT_SPECIFICATIONS = {
@@ -1217,6 +1370,10 @@ final class BreakpointInterceptor {
                     brk("java/lang/reflect/Proxy", "getProxyClass", "(Ljava/lang/ClassLoader;[Ljava/lang/Class;)Ljava/lang/Class;", BreakpointInterceptor::getProxyClass),
                     brk("java/lang/reflect/Proxy", "newProxyInstance",
                                     "(Ljava/lang/ClassLoader;[Ljava/lang/Class;Ljava/lang/reflect/InvocationHandler;)Ljava/lang/Object;", BreakpointInterceptor::newProxyInstance),
+                    /*
+                     * For dumping dynamically generated classes
+                     */
+                    brk("java/lang/ClassLoader", "postDefineClass", "(Ljava/lang/Class;Ljava/security/ProtectionDomain;)V", BreakpointInterceptor::postDefineClass),
 
                     optionalBrk("java/util/ResourceBundle",
                                     "getBundleImpl",

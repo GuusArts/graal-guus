@@ -49,6 +49,8 @@ public class ConfigurationType implements JsonPrintable {
     private boolean allDeclaredConstructors;
     private boolean allPublicConstructors;
 
+    private int dynamicClassChecksum = 0;
+
     public ConfigurationType(String qualifiedJavaName) {
         assert qualifiedJavaName.indexOf('/') == -1 : "Requires qualified Java name, not internal representation";
         assert !qualifiedJavaName.startsWith("[") : "Requires Java source array syntax, for example java.lang.String[]";
@@ -197,6 +199,10 @@ public class ConfigurationType implements JsonPrintable {
         removeMethods(ConfigurationMemberKind.PUBLIC, true);
     }
 
+    public void setDynamicClassChecksum(int dynamicClassChecksum) {
+        this.dynamicClassChecksum = dynamicClassChecksum;
+    }
+
     @Override
     public void printJson(JsonWriter writer) throws IOException {
         writer.append('{').indent().newline();
@@ -219,6 +225,9 @@ public class ConfigurationType implements JsonPrintable {
                             methods.keySet(),
                             Comparator.comparing(ConfigurationMethod::getName).thenComparing(Comparator.nullsFirst(Comparator.comparing(ConfigurationMethod::getInternalSignature))),
                             JsonPrintable::printJson);
+        }
+        if (dynamicClassChecksum != 0) {
+            writer.append(',').newline().quote("dynamicClassChecksum").append(':').append(String.valueOf(dynamicClassChecksum));
         }
         writer.unindent().newline();
         writer.append('}');

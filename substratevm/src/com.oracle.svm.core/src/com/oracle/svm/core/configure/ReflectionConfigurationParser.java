@@ -31,6 +31,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
 
+import com.oracle.svm.core.hub.ClassForNameSupport;
 import com.oracle.svm.core.util.json.JSONParser;
 import com.oracle.svm.core.util.json.JSONParserException;
 
@@ -128,6 +129,8 @@ public final class ReflectionConfigurationParser<T> extends ConfigurationParser 
                     parseMethods(asList(value, "Attribute 'methods' must be an array of method descriptors"), clazz);
                 } else if (name.equals("fields")) {
                     parseFields(asList(value, "Attribute 'fields' must be an array of field descriptors"), clazz);
+                } else if (name.equals("dynamicClassChecksum")) {
+                    ClassForNameSupport.registerDynamicClassChecksum(className, asInteger(value, "dynamicClassChecksum"));
                 } else {
                     throw new JSONParserException("Unknown attribute '" + name +
                                     "' (supported attributes: allDeclaredConstructors, allPublicConstructors, allDeclaredMethods, allPublicMethods, allDeclaredFields, allPublicFields, methods, fields) in defintion of class " +

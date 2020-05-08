@@ -38,10 +38,13 @@ public class NativeImageAgentJNIHandleSet extends JNIHandleSet {
     final JNIMethodId javaLangReflectMemberGetDeclaringClass;
     final JNIMethodId javaUtilEnumerationHasMoreElements;
     final JNIMethodId javaUtilMissingResourceExceptionCtor3;
+    public final JNIMethodId javaLangClassLoaderGetResource;
     final JNIObjectHandle javaLangClassLoader;
+    public final JNIObjectHandle javaNioByteBuffer;
     public final JNIObjectHandle javaLangSecurityException;
     public final JNIObjectHandle javaLangNoClassDefFoundError;
     public final JNIObjectHandle javaLangNoSuchMethodError;
+    public final JNIObjectHandle javaLangIncompatibleClassChangeError;
     final JNIObjectHandle javaLangNoSuchMethodException;
     public final JNIObjectHandle javaLangNoSuchFieldError;
     final JNIObjectHandle javaLangNoSuchFieldException;
@@ -65,19 +68,22 @@ public class NativeImageAgentJNIHandleSet extends JNIHandleSet {
         JNIObjectHandle javaLangClass = findClass(env, "java/lang/Class");
         javaLangClassForName3 = getMethodId(env, javaLangClass, "forName", "(Ljava/lang/String;ZLjava/lang/ClassLoader;)Ljava/lang/Class;", true);
 
+        javaLangClassLoaderGetResource = getMethodId(env, findClass(env, "java/lang/ClassLoader"), "getResource", "(Ljava/lang/String;)Ljava/net/URL;", false);
+
         JNIObjectHandle javaLangReflectMember = findClass(env, "java/lang/reflect/Member");
         javaLangReflectMemberGetName = getMethodId(env, javaLangReflectMember, "getName", "()Ljava/lang/String;", false);
         javaLangReflectMemberGetDeclaringClass = getMethodId(env, javaLangReflectMember, "getDeclaringClass", "()Ljava/lang/Class;", false);
 
         JNIObjectHandle javaUtilEnumeration = findClass(env, "java/util/Enumeration");
         javaUtilEnumerationHasMoreElements = getMethodId(env, javaUtilEnumeration, "hasMoreElements", "()Z", false);
-
-        javaLangClassLoader = newClassGlobalRef(env, "java/lang/ClassLoader");
+        javaNioByteBuffer = newClassGlobalRef(env, "java/nio/ByteBuffer");
         javaLangSecurityException = newClassGlobalRef(env, "java/lang/SecurityException");
+        javaLangClassLoader = newClassGlobalRef(env, "java/lang/ClassLoader");
         javaLangNoClassDefFoundError = newClassGlobalRef(env, "java/lang/NoClassDefFoundError");
         javaLangNoSuchMethodError = newClassGlobalRef(env, "java/lang/NoSuchMethodError");
         javaLangNoSuchMethodException = newClassGlobalRef(env, "java/lang/NoSuchMethodException");
         javaLangNoSuchFieldError = newClassGlobalRef(env, "java/lang/NoSuchFieldError");
+        javaLangIncompatibleClassChangeError = newClassGlobalRef(env, "java/lang/IncompatibleClassChangeError");
         javaLangNoSuchFieldException = newClassGlobalRef(env, "java/lang/NoSuchFieldException");
         javaLangClassNotFoundException = newClassGlobalRef(env, "java/lang/ClassNotFoundException");
         javaLangRuntimeException = newClassGlobalRef(env, "java/lang/RuntimeException");

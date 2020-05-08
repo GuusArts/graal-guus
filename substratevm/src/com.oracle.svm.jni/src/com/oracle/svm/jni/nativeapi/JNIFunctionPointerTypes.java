@@ -27,6 +27,7 @@ package com.oracle.svm.jni.nativeapi;
 import org.graalvm.nativeimage.c.function.CFunctionPointer;
 import org.graalvm.nativeimage.c.function.InvokeCFunctionPointer;
 import org.graalvm.nativeimage.c.type.CCharPointer;
+import org.graalvm.nativeimage.c.type.VoidPointer;
 import org.graalvm.word.PointerBase;
 
 public final class JNIFunctionPointerTypes {
@@ -60,6 +61,11 @@ public final class JNIFunctionPointerTypes {
         JNIObjectHandle invoke(JNIEnvironment env, JNIObjectHandle obj);
     }
 
+    public interface CallObjectMethod0FunctionPointer extends CFunctionPointer {
+        @InvokeCFunctionPointer
+        JNIObjectHandle invoke(JNIEnvironment env, JNIObjectHandle objOrClass, JNIMethodId methodID);
+    }
+
     public interface CallObjectMethodAFunctionPointer extends CFunctionPointer {
         @InvokeCFunctionPointer
         JNIObjectHandle invoke(JNIEnvironment env, JNIObjectHandle objOrClass, JNIMethodId methodID, JNIValue args);
@@ -78,6 +84,11 @@ public final class JNIFunctionPointerTypes {
     public interface CallIntMethodAFunctionPointer extends CFunctionPointer {
         @InvokeCFunctionPointer
         int invoke(JNIEnvironment env, JNIObjectHandle objOrClass, JNIMethodId methodId, JNIValue args);
+    }
+
+    public interface CallIntMethodFunctionPointer extends CFunctionPointer {
+        @InvokeCFunctionPointer
+        int invoke(JNIEnvironment env, JNIObjectHandle objOrClass, JNIMethodId methodID);
     }
 
     public interface NewObjectAFunctionPointer extends CFunctionPointer {
@@ -128,6 +139,16 @@ public final class JNIFunctionPointerTypes {
     public interface GetObjectArrayElementFunctionPointer extends CFunctionPointer {
         @InvokeCFunctionPointer
         JNIObjectHandle invoke(JNIEnvironment env, JNIObjectHandle array, int index);
+    }
+
+    public interface GetByteArrayElementsFunctionPointer extends CFunctionPointer {
+        @InvokeCFunctionPointer
+        CCharPointer invoke(JNIEnvironment env, JNIObjectHandle array, JNIObjectHandle isCopy);
+    }
+
+    public interface ReleaseByteArrayElementsFunctionPointer extends CFunctionPointer {
+        @InvokeCFunctionPointer
+        CCharPointer invoke(JNIEnvironment env, JNIObjectHandle array, CCharPointer elems, int mode);
     }
 
     public interface SetObjectArrayElementFunctionPointer extends CFunctionPointer {
@@ -195,16 +216,14 @@ public final class JNIFunctionPointerTypes {
         JNIObjectHandle invoke(JNIEnvironment env, int length);
     }
 
-    public interface GetByteArrayElementsFunctionPointer extends CFunctionPointer {
-        // isCopy is actually a boolean
+    public interface CallVoidMethodAFunctionPointer extends CFunctionPointer {
         @InvokeCFunctionPointer
-        CCharPointer invoke(JNIEnvironment env, JNIObjectHandle byteArray, CCharPointer isCopy);
+        void invoke(JNIEnvironment env, JNIObjectHandle objOrClass, JNIMethodId methodID, JNIValue args);
     }
 
-    public interface ReleaseByteArrayElementsFunctionPointer extends CFunctionPointer {
-        // isCopy is actually a boolean
+    public interface GetDirectBufferAddress extends CFunctionPointer {
         @InvokeCFunctionPointer
-        CCharPointer invoke(JNIEnvironment env, JNIObjectHandle byteArray, CCharPointer elements, int mode);
+        VoidPointer invoke(JNIEnvironment env, JNIObjectHandle directBuf);
     }
 
     private JNIFunctionPointerTypes() {

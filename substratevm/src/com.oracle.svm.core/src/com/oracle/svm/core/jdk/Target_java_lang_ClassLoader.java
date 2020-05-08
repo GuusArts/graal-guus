@@ -32,13 +32,14 @@ import java.net.URL;
 import java.net.URLClassLoader;
 import java.security.ProtectionDomain;
 import java.util.ArrayList;
-import java.util.Collections;
-import java.util.Enumeration;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
-import java.util.Vector;
 import java.util.WeakHashMap;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.Enumeration;
+import java.util.Collections;
+import java.util.Vector;
 
 import com.oracle.svm.core.annotate.Alias;
 import com.oracle.svm.core.annotate.Delete;
@@ -49,6 +50,7 @@ import com.oracle.svm.core.annotate.TargetClass;
 import com.oracle.svm.core.annotate.TargetElement;
 import com.oracle.svm.core.hub.ClassForNameSupport;
 import com.oracle.svm.core.hub.DynamicHub;
+import com.oracle.svm.core.util.JavaClassUtil;
 import com.oracle.svm.core.util.VMError;
 
 @TargetClass(classNameProvider = Package_jdk_internal_loader.class, className = "URLClassPath")
@@ -219,6 +221,23 @@ final class Target_java_lang_ClassLoader {
             res.add(Resources.createURL(name, data));
         }
         return Collections.enumeration(res);
+    }
+
+    @Substitute
+    @SuppressWarnings("unused")
+    Class<?> defineClass(String name, byte[] b, int off, int len)
+                    throws ClassFormatError {
+        try {
+            ClassLoaderHelper helper = new ClassLoaderHelper(b, name);
+            // Verify the runtime class is the same as previously prepared by byte array hashcode
+            helper.verifyClassUnchanged();
+            return helper.doDefineClass();
+        } catch (IOException e) {
+            ClassFormatError error = new ClassFormatError("Can't get class info " +
+                            "from provided byte array.");
+            error.initCause(e);
+            throw error;
+        }
     }
 
     @Substitute
@@ -425,4 +444,50 @@ final class Target_java_lang_AssertionStatusDirectives {
 
 @TargetClass(className = "java.lang.NamedPackage", onlyWith = JDK11OrLater.class) //
 final class Target_java_lang_NamedPackage {
+}
+
+final class ClassLoaderHelper {
+
+    private String className;
+    private byte[] classContents;
+
+    ClassLoaderHelper(byte[] b, String name) throws IOException {
+        classContents = b;
+        if (name == null) {
+            className = JavaClassUtil.getClassName(b);
+        } else {
+            className = name;
+        }
+    }
+
+    public Class<?> doDefineClass() {
+        try {
+            return ClassForNameSupport.forName(className, false);
+        } catch (ClassNotFoundException e) {
+            ClassFormatError error = new ClassFormatError("Class " + className + " has not been prepared.");
+            error.initCause(e);
+            throw error;
+        }
+    }
+
+    public void verifyClassUnchanged() {
+        try {
+            int preparedHashCode = ClassForNameSupport.getDynamicClassChecksum(className);
+            int originalHashcode = Arrays.hashCode(classContents);
+            if (preparedHashCode != originalHashcode) {
+                int runtimeHashCode = JavaClassUtil.getHashCodeWithoutSourceFileInfo(classContents);
+                if (preparedHashCode != runtimeHashCode) {
+                    throw new ClassFormatError("Previously prepared class " + className + " has different contents from the dynamically generated one in runtime.");
+                }
+            }
+        } catch (ClassNotFoundException e) {
+            ClassFormatError error = new ClassFormatError("Class " + className + " has not been prepared.");
+            error.initCause(e);
+            throw error;
+        } catch (IOException e) {
+            ClassFormatError error = new ClassFormatError("Cannot calculate hashcode from class " + className);
+            error.initCause(e);
+            throw error;
+        }
+    }
 }
