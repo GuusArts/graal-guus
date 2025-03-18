@@ -108,7 +108,7 @@ class SVMUtil:
     string_type = gdb.lookup_type("java.lang.String")
     enum_type = gdb.lookup_type("java.lang.Enum")
     object_type = gdb.lookup_type("java.lang.Object")
-    hub_type = gdb.lookup_type("java.lang.Class")
+    hub_type = gdb.lookup_type("Encoded$Dynamic$Hub")
     null = gdb.Value(0).cast(object_type.pointer())
     classloader_type = gdb.lookup_type("java.lang.ClassLoader")
     wrapper_types = [gdb.lookup_type(f'java.lang.{x}') for x in
