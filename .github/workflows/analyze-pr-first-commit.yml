@@ -1,34 +1,28 @@
-name: Analyze First Commit of Selected PRs
-
+name: "CodeQL Analysis for Specific PRs"
 on:
-  workflow_dispatch:  # Allows manual execution
-  push:
+  pull_request:
     branches:
-      - "pr-*-before-improvements"  # Runs when first commit branches are pushed
+      - main  # Adjust this to the target branch of your PRs
+    paths:
+      - "pr-*-before-improvements/**"  # This ensures it only runs for your specific PR branches (if desired)
 
 jobs:
   analyze:
+    name: Analyze code with CodeQL
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0  # Ensure we get full commit history
+        uses: actions/checkout@v2
 
       - name: Set up CodeQL
-        uses: github/codeql-action/init@v3
+        uses: github/codeql-action/init@v1
         with:
-          languages: java
+          languages: java  # Adjust this depending on the language you are analyzing
 
-      - name: Build Database for CodeQL Analysis
-        run: codeql database create db --language=java --source-root=.
+      - name: Build code
+        run: |
+          # Example build commands for Java
+          mvn clean compile
 
       - name: Run CodeQL Analysis
-        run: codeql analyze db --format=sarif -o results.sarif
-
-      - name: Upload Analysis Results
-        uses: actions/upload-artifact@v3
-        with:
-          name: codeql-results
-          path: results.sarif
+        uses: github/codeql-action/analyze@v1
