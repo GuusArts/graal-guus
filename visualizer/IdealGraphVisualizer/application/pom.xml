@@ -71,7 +71,7 @@
                         <configuration>
                             <target>
                                 <zip destfile="${project.build.directory}/${brandingToken}-${project.version}.zip" update="true" whenempty="fail">
-                                    <fileset dir="${project.build.directory}" includes="**/${brandingToken}.icns" />
+                                    <fileset dir="${project.build.directory}" includes="**/${brandingToken}.icns"/>
                                 </zip>
                             </target>
                         </configuration>
@@ -1592,7 +1592,7 @@
         <dependency>
             <groupId>com.google.code.gson</groupId>
             <artifactId>gson</artifactId>
-            <version>2.8.9</version>
+            <version>2.12.1</version>
         </dependency>
     </dependencies>
     <properties>
