@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2022, 2022, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2025, 2025, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -22,36 +22,27 @@
  * or visit www.oracle.com if you need additional information or have any
  * questions.
  */
-package com.oracle.svm.core.option;
+package com.oracle.svm.hosted.imagelayer;
 
-import org.graalvm.collections.UnmodifiableMapCursor;
+import org.graalvm.nativeimage.ImageSingletons;
 
-import com.oracle.svm.core.feature.AutomaticallyRegisteredFeature;
-import com.oracle.svm.core.feature.InternalFeature;
+import com.oracle.graal.pointsto.heap.ImageHeapRelocatableConstant;
 
-import jdk.graal.compiler.options.OptionKey;
+import jdk.graal.compiler.nodes.StructuredGraph;
+import jdk.graal.compiler.nodes.calc.FloatingNode;
+import jdk.vm.ci.meta.MetaAccessProvider;
 
-@AutomaticallyRegisteredFeature
-public class ValidateImageBuildOptionsFeature implements InternalFeature {
-    @Override
-    public void beforeAnalysis(BeforeAnalysisAccess access) {
-        UnmodifiableMapCursor<OptionKey<?>, Object> cursor = RuntimeOptionValues.singleton().getMap().getEntries();
-        while (cursor.advance()) {
-            validate(cursor.getKey());
-        }
+/**
+ * {@link ImageHeapRelocatableConstant}s registered via this support are allowed to be directly
+ * referenced within graphs.
+ */
+public abstract class ImageHeapRelocatableConstantSupport {
 
-        cursor = HostedOptionValues.singleton().getMap().getEntries();
-        while (cursor.advance()) {
-            validate(cursor.getKey());
-        }
+    static ImageHeapRelocatableConstantSupport singleton() {
+        return ImageSingletons.lookup(ImageHeapRelocatableConstantSupport.class);
     }
 
-    private static void validate(OptionKey<?> option) {
-        if (option instanceof SubstrateOptionKey) {
-            SubstrateOptionKey<?> o = (SubstrateOptionKey<?>) option;
-            if (o.hasBeenSet()) {
-                o.validate();
-            }
-        }
-    }
+    abstract void registerLoadableConstant(ImageHeapRelocatableConstant constant);
+
+    abstract FloatingNode emitLoadConstant(StructuredGraph graph, MetaAccessProvider metaAccess, ImageHeapRelocatableConstant constant);
 }

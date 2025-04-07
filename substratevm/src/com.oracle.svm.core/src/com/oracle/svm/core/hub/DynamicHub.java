@@ -85,7 +85,6 @@ import org.graalvm.nativeimage.ImageSingletons;
 import org.graalvm.nativeimage.Platform;
 import org.graalvm.nativeimage.Platforms;
 import org.graalvm.nativeimage.c.function.CFunctionPointer;
-import org.graalvm.nativeimage.impl.InternalPlatform;
 
 import com.oracle.svm.core.BuildPhaseProvider.AfterHostedUniverse;
 import com.oracle.svm.core.BuildPhaseProvider.CompileQueueFinished;
@@ -572,12 +571,13 @@ public final class DynamicHub implements AnnotatedElement, java.lang.reflect.Typ
     @Platforms(Platform.HOSTED_ONLY.class)
     public void setSharedData(int layoutEncoding, int monitorOffset, int identityHashOffset, long referenceMapIndex,
                     boolean isInstantiated) {
-        VMError.guarantee(monitorOffset == (char) monitorOffset, "Class %s has an invalid monitor field offset. Most likely, its objects are larger than supported.", name);
-        VMError.guarantee(identityHashOffset == (char) identityHashOffset, "Class %s has an invalid identity hash code field offset. Most likely, its objects are larger than supported.", name);
+        VMError.guarantee(monitorOffset == -1 || monitorOffset == (char) monitorOffset, "Class %s has an invalid monitor field offset. Most likely, its objects are larger than supported.", name);
+        VMError.guarantee(identityHashOffset == -1 || identityHashOffset == (char) identityHashOffset,
+                        "Class %s has an invalid identity hash code field offset. Most likely, its objects are larger than supported.", name);
 
         this.layoutEncoding = layoutEncoding;
-        this.monitorOffset = (char) monitorOffset;
-        this.identityHashOffset = (char) identityHashOffset;
+        this.monitorOffset = monitorOffset == -1 ? 0 : (char) monitorOffset;
+        this.identityHashOffset = identityHashOffset == -1 ? 0 : (char) identityHashOffset;
 
         if ((int) referenceMapIndex != referenceMapIndex) {
             throw VMError.shouldNotReachHere("Reference map index not within integer range, need to switch field from int to long");
@@ -1566,28 +1566,24 @@ public final class DynamicHub implements AnnotatedElement, java.lang.reflect.Typ
     private native Constructor<?> getEnclosingConstructor();
 
     @Substitute
-    @Platforms(InternalPlatform.NATIVE_ONLY.class)
     @CallerSensitive
     private static Class<?> forName(String className) throws Throwable {
         return forName(className, Reflection.getCallerClass());
     }
 
     @Substitute
-    @Platforms(InternalPlatform.NATIVE_ONLY.class)
     @CallerSensitiveAdapter
     private static Class<?> forName(String className, Class<?> caller) throws Throwable {
-        return forName(className, true, caller.getClassLoader(), caller);
+        return forName(className, true, caller == null ? ClassLoader.getSystemClassLoader() : caller.getClassLoader(), caller);
     }
 
     @Substitute
-    @Platforms(InternalPlatform.NATIVE_ONLY.class)
     @CallerSensitive
     private static Class<?> forName(Module module, String className) throws Throwable {
         return forName(module, className, Reflection.getCallerClass());
     }
 
     @Substitute
-    @Platforms(InternalPlatform.NATIVE_ONLY.class)
     @CallerSensitiveAdapter
     @TargetElement(onlyWith = JDK21OrEarlier.class)
     private static Class<?> forName(@SuppressWarnings("unused") Module module, String className, Class<?> caller) throws Throwable {

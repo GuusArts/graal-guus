@@ -206,7 +206,7 @@ import jdk.vm.ci.meta.SpeculationLog;
  * appropriately to comply with the layouts above.
  */
 // @formatter:off
-@SyncPort(from = "https://github.com/openjdk/jdk/blob/7a5acb9be17cd54bbd0abf2524386b981dd5ac04/src/hotspot/cpu/x86/c2_MacroAssembler_x86.cpp#L174-L495",
+@SyncPort(from = "https://github.com/openjdk/jdk/blob/03105fc92505e9e367354e763b99cbe02bf473d6/src/hotspot/cpu/x86/c2_MacroAssembler_x86.cpp#L172-L493",
           sha1 = "eeccf08eec0f427f9056a88620ff3f53ab8c189c")
 // @formatter:on
 public class MonitorSnippets implements Snippets {
@@ -440,7 +440,7 @@ public class MonitorSnippets implements Snippets {
     }
 
     // @formatter:off
-    @SyncPort(from = "https://github.com/openjdk/jdk/blob/8f8a879de03add68e385f2610863d3b4ddd86df7/src/hotspot/cpu/x86/c2_MacroAssembler_x86.cpp#L497-L663",
+    @SyncPort(from = "https://github.com/openjdk/jdk/blob/03105fc92505e9e367354e763b99cbe02bf473d6/src/hotspot/cpu/x86/c2_MacroAssembler_x86.cpp#L495-L661",
               sha1 = "1c396a67926e92a2cbc64c27fe667142e9ec157d")
     // @formatter:on
     @SuppressWarnings("unused")
@@ -568,7 +568,7 @@ public class MonitorSnippets implements Snippets {
     }
 
     // @formatter:off
-    @SyncPort(from = "https://github.com/openjdk/jdk/blob/7a5acb9be17cd54bbd0abf2524386b981dd5ac04/src/hotspot/cpu/x86/c2_MacroAssembler_x86.cpp#L665-L832",
+    @SyncPort(from = "https://github.com/openjdk/jdk/blob/03105fc92505e9e367354e763b99cbe02bf473d6/src/hotspot/cpu/x86/c2_MacroAssembler_x86.cpp#L663-L830",
               sha1 = "ad63b9816f3e1851c7defe445488b49dd49e69d6")
     // @formatter:on
     private static boolean tryLightweightUnlocking(Object object, Word thread, Word lock, boolean trace, Counters counters) {
@@ -850,6 +850,8 @@ public class MonitorSnippets implements Snippets {
 
         public final Counters counters;
 
+        private final boolean requiresStrictLockOrder;
+
         @SuppressWarnings("this-escape")
         public Templates(OptionValues options, SnippetCounter.Group.Factory factory, HotSpotProviders providers, GraalHotSpotVMConfig config) {
             super(options, providers);
@@ -899,6 +901,7 @@ public class MonitorSnippets implements Snippets {
             this.checkCounter = snippet(providers, MonitorSnippets.class, "checkCounter");
 
             this.counters = new Counters(factory);
+            this.requiresStrictLockOrder = providers.getPlatformConfigurationProvider().requiresStrictLockOrder();
         }
 
         public void lower(CheckFastPathMonitorEnterNode checkFastPathMonitorEnterNode, HotSpotRegistersProvider registers, GraalHotSpotVMConfig config, LoweringTool tool) {
@@ -916,11 +919,31 @@ public class MonitorSnippets implements Snippets {
             template(tool, checkFastPathMonitorEnterNode, args).instantiate(tool.getMetaAccess(), checkFastPathMonitorEnterNode, DEFAULT_REPLACER, args);
         }
 
+        private boolean verifyLockOrder(MonitorEnterNode monitorenterNode) {
+            if (requiresStrictLockOrder) {
+                FrameState state = monitorenterNode.stateAfter();
+                boolean subsequentLocksMustBeEliminated = false;
+                for (int lockIdx = 0; lockIdx < state.locksSize(); lockIdx++) {
+                    if (subsequentLocksMustBeEliminated) {
+                        if (!state.monitorIdAt(lockIdx).isEliminated()) {
+                            return false;
+                        }
+                    }
+                    if (state.monitorIdAt(lockIdx) == monitorenterNode.getMonitorId()) {
+                        subsequentLocksMustBeEliminated = true;
+                    }
+                }
+            }
+            return true;
+        }
+
         public void lower(MonitorEnterNode monitorenterNode, HotSpotRegistersProvider registers, LoweringTool tool) {
             StructuredGraph graph = monitorenterNode.graph();
             checkBalancedMonitors(graph, tool);
 
-            assert ((ObjectStamp) monitorenterNode.object().stamp(NodeView.DEFAULT)).nonNull();
+            GraalError.guarantee(((ObjectStamp) monitorenterNode.object().stamp(NodeView.DEFAULT)).nonNull(), "should have a non-null stamp: %s", monitorenterNode);
+            GraalError.guarantee(!monitorenterNode.getMonitorId().isEliminated(), "current monitor is eliminated: %s", monitorenterNode);
+            GraalError.guarantee(verifyLockOrder(monitorenterNode), "locks are disordered: %s", monitorenterNode);
 
             Arguments args = new Arguments(monitorenter, graph.getGuardsStage(), tool.getLoweringStage());
             args.add("object", monitorenterNode.object());

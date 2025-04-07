@@ -175,7 +175,6 @@ public class SVMImageLayerLoader extends ImageLayerLoader {
     protected final Map<String, Integer> stringToConstant = new ConcurrentHashMap<>();
     protected final Map<Enum<?>, Integer> enumToConstant = new ConcurrentHashMap<>();
     protected final Map<Integer, Long> objectOffsets = new ConcurrentHashMap<>();
-    protected final Map<AnalysisField, Integer> fieldLocations = new ConcurrentHashMap<>();
     private final Map<Class<?>, Boolean> capturingClasses = new ConcurrentHashMap<>();
     private final Map<ResolvedJavaMethod, Boolean> methodHandleCallers = new ConcurrentHashMap<>();
 
@@ -187,6 +186,7 @@ public class SVMImageLayerLoader extends ImageLayerLoader {
     protected AnalysisUniverse universe;
     protected AnalysisMetaAccess metaAccess;
     protected HostedValuesProvider hostedValuesProvider;
+    private final LayeredStaticFieldSupport layeredStaticFieldSupport = LayeredStaticFieldSupport.singleton();
 
     public SVMImageLayerLoader(SVMImageLayerSnapshotUtil imageLayerSnapshotUtil, HostedImageLayerBuildingSupport imageLayerBuildingSupport, SharedLayerSnapshot.Reader snapshot,
                     FileChannel graphChannel, boolean useSharedLayerGraphs) {
@@ -1141,16 +1141,17 @@ public class SVMImageLayerLoader extends ImageLayerLoader {
     @Override
     public void addBaseLayerField(AnalysisField analysisField) {
         fields.putIfAbsent(analysisField.getId(), analysisField);
+        if (analysisField.isStatic()) {
+            PersistedAnalysisField.Reader fieldData = getFieldData(analysisField);
+            assert fieldData != null : "The field should be in the base layer";
+            layeredStaticFieldSupport.ensureInitializedFromFieldData(analysisField, fieldData);
+        }
     }
 
     @Override
     public void initializeBaseLayerField(AnalysisField analysisField) {
         PersistedAnalysisField.Reader fieldData = getFieldData(analysisField);
         assert fieldData != null : "The field should be in the base layer";
-        int location = fieldData.getLocation();
-        if (location != 0) {
-            fieldLocations.put(analysisField, location);
-        }
 
         boolean isAccessed = fieldData.getIsAccessed();
         boolean isRead = fieldData.getIsRead();
@@ -1628,10 +1629,6 @@ public class SVMImageLayerLoader extends ImageLayerLoader {
     public Long getObjectOffset(JavaConstant javaConstant) {
         ImageHeapConstant imageHeapConstant = (ImageHeapConstant) javaConstant;
         return objectOffsets.get(ImageHeapConstant.getConstantID(imageHeapConstant));
-    }
-
-    public int getFieldLocation(AnalysisField field) {
-        return fieldLocations.get(field);
     }
 
     public ImageHeapConstant getBaseLayerStaticPrimitiveFields() {
